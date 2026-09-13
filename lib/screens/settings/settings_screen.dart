@@ -9,11 +9,13 @@ import 'widgets/time_block_editor_dialog.dart';
 class SettingsScreen extends StatefulWidget {
   final SettingsService settingsService;
   final bool isTab;
+  final VoidCallback? onNavigateBackToHome;
 
   const SettingsScreen({
     super.key,
     required this.settingsService,
     this.isTab = false,
+    this.onNavigateBackToHome,
   });
 
   @override
@@ -113,7 +115,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
-      Navigator.of(context).pop();
+      if (widget.onNavigateBackToHome != null) {
+        widget.onNavigateBackToHome!();
+      } else if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
     }
   }
 

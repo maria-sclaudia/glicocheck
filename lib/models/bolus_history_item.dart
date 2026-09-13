@@ -1,4 +1,4 @@
-/// Registro histórico de um cálculo de bolus realizado.
+/// Item individual do histórico de cálculos de bolus de insulina realizados.
 class BolusHistoryItem {
   final String id;
   final DateTime timestamp;
@@ -54,13 +54,11 @@ class BolusHistoryItem {
       carbohydrateInsulin: (json['carbohydrateInsulin'] as num).toDouble(),
       correctionInsulin: (json['correctionInsulin'] as num).toDouble(),
       totalInsulin: (json['totalInsulin'] as num).toDouble(),
-      configurationUsed: json['configurationUsed'] as String? ?? '',
-      targetMin: (json['targetMin'] as num?)?.toDouble() ?? 80.0,
-      targetMax: (json['targetMax'] as num?)?.toDouble() ?? 120.0,
-      insulinSensitivity:
-          (json['insulinSensitivity'] as num?)?.toDouble() ?? 50.0,
-      carbohydrateRatio:
-          (json['carbohydrateRatio'] as num?)?.toDouble() ?? 10.0,
+      configurationUsed: json['configurationUsed'] as String? ?? 'Padrão',
+      targetMin: (json['targetMin'] as num).toDouble(),
+      targetMax: (json['targetMax'] as num).toDouble(),
+      insulinSensitivity: (json['insulinSensitivity'] as num).toDouble(),
+      carbohydrateRatio: (json['carbohydrateRatio'] as num).toDouble(),
     );
   }
 }

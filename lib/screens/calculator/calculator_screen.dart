@@ -1,13 +1,15 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/theme/app_theme.dart';
+import '../../models/bolus_calculation_result.dart';
 import '../../models/bolus_history_item.dart';
 import '../../services/bolus_calculator_service.dart';
 import '../../services/settings_service.dart';
-import 'result_screen.dart';
+import '../../widgets/calculation_breakdown_widget.dart';
+import '../../widgets/glucose_status_badge.dart';
 
-/// Tela principal de Entrada e Cálculo Rápido de Bolus (Mobile-First).
+/// Tela unificada de Entrada e Resultado de Bolus de Insulina (Mobile-First).
 class CalculatorScreen extends StatefulWidget {
   final SettingsService settingsService;
   final BolusCalculatorService calculatorService;
@@ -33,22 +35,8 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   final FocusNode _glucoseFocus = FocusNode();
   final FocusNode _carbsFocus = FocusNode();
 
+  BolusCalculationResult? _lastResult;
   String? _validationError;
-  Timer? _clockTimer;
-  DateTime _currentTime = DateTime.now();
-
-  @override
-  void initState() {
-    super.initState();
-    // Atualiza relógio a cada 30s para manter o bloco ativo atualizado
-    _clockTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) {
-        setState(() {
-          _currentTime = DateTime.now();
-        });
-      }
-    });
-  }
 
   @override
   void dispose() {
@@ -56,7 +44,6 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     _carbsController.dispose();
     _glucoseFocus.dispose();
     _carbsFocus.dispose();
-    _clockTimer?.cancel();
     super.dispose();
   }
 
@@ -64,14 +51,6 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     final clean = text.trim().replaceAll(',', '.');
     if (clean.isEmpty) return null;
     return double.tryParse(clean);
-  }
-
-  void _addCarbs(int amount) {
-    final current = _parseInputValue(_carbsController.text) ?? 0;
-    final updated = (current + amount).toInt();
-    setState(() {
-      _carbsController.text = updated.toString();
-    });
   }
 
   void _onCalculate() {
@@ -86,6 +65,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     if (glucose == null && carbs == null) {
       setState(() {
         _validationError = 'Informe a glicemia ou a quantidade de carboidratos.';
+        _lastResult = null;
       });
       return;
     }
@@ -96,10 +76,11 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
         glucose: glucose,
         carbohydrates: carbs,
         settings: settings,
-        calculationTime: _currentTime,
+        calculationTime: DateTime.now(),
       );
 
       setState(() {
+        _lastResult = result;
         _validationError = null;
       });
 
@@ -122,24 +103,15 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
         carbohydrateRatio: result.carbohydrateRatio,
       );
       widget.settingsService.addHistoryItem(historyItem);
-
-      // Navegar para a Tela Dedicada de Resultado
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ResultScreen(
-            result: result,
-            settingsService: widget.settingsService,
-          ),
-        ),
-      );
     } on BolusValidationException catch (e) {
       setState(() {
         _validationError = e.message;
+        _lastResult = null;
       });
     } catch (e) {
       setState(() {
         _validationError = 'Erro ao realizar cálculo: $e';
+        _lastResult = null;
       });
     }
   }
@@ -148,6 +120,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     setState(() {
       _glucoseController.clear();
       _carbsController.clear();
+      _lastResult = null;
       _validationError = null;
     });
     FocusScope.of(context).unfocus();
@@ -156,8 +129,6 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final settings = widget.settingsService.settings;
-    final activeParams = settings.getActiveParameters(_currentTime);
 
     return Scaffold(
       appBar: AppBar(
@@ -194,16 +165,6 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.tune_rounded),
-            tooltip: 'Configurações',
-            onPressed: widget.onNavigateToSettings ??
-                () {
-                  Navigator.pushNamed(context, '/settings');
-                },
-          ),
-        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -211,16 +172,46 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Bloco de Horário e Parâmetros Ativos (Compacto)
-              _buildCompactActiveBanner(context, activeParams),
+              // 1. Card de Entrada de Dados (Glicemia & Carboidratos)
+              _buildInputCard(context),
               const SizedBox(height: 16),
 
-              // 2. Card de Entrada de Dados (Glicemia & Carboidratos)
-              _buildInputCard(context),
-              const SizedBox(height: 20),
+              // 2. Botão de Ação: CALCULAR DOSE e Limpar
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      key: const Key('btn_calculate'),
+                      onPressed: _onCalculate,
+                      icon: const Icon(Icons.bolt_rounded, size: 22),
+                      label: const Text(
+                        'CALCULAR DOSE',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        elevation: 2,
+                        shadowColor: theme.colorScheme.primary.withValues(alpha: 0.4),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton.filledTonal(
+                    onPressed: _onClear,
+                    tooltip: 'Limpar Campos',
+                    icon: const Icon(Icons.refresh_rounded),
+                    padding: const EdgeInsets.all(15),
+                  ),
+                ],
+              ),
 
               // 3. Mensagem de Validação de Erro
               if (_validationError != null) ...[
+                const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
@@ -245,71 +236,15 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 20),
               ],
 
-              // 4. Botão de Ação Principal: CALCULAR BOLUS
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      key: const Key('btn_calculate'),
-                      onPressed: _onCalculate,
-                      icon: const Icon(Icons.bolt_rounded, size: 24),
-                      label: const Text(
-                        'CALCULAR DOSE',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        elevation: 3,
-                        shadowColor: theme.colorScheme.primary.withValues(alpha: 0.4),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  IconButton.filledTonal(
-                    onPressed: _onClear,
-                    tooltip: 'Limpar Campos',
-                    icon: const Icon(Icons.refresh_rounded),
-                    padding: const EdgeInsets.all(16),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
+              // 4. Seção Unificada do Resultado da Dose (Apresentação Discreta e Completa)
+              if (_lastResult != null) ...[
+                const SizedBox(height: 20),
+                _buildDiscreetResultSection(context, _lastResult!),
+              ],
 
-              // 5. Card Informativo de Dica de Uso Rápido
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.touch_app_outlined,
-                      size: 20,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Preencha a glicemia e/ou os carboidratos da refeição para calcular a recomendação exata de insulina.',
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          color: theme.colorScheme.onSurfaceVariant,
-                          height: 1.3,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              const SizedBox(height: 32),
             ],
           ),
         ),
@@ -317,76 +252,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     );
   }
 
-  /// Banner compacto com o período e parâmetros ativos
-  Widget _buildCompactActiveBanner(BuildContext context, dynamic activeParams) {
-    final theme = Theme.of(context);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              Icons.schedule_rounded,
-              size: 16,
-              color: theme.colorScheme.onPrimaryContainer,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      activeParams.sourceDescription,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      'Alvo: ${activeParams.targetRangeCompact()}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Relação: ${activeParams.carbRatioFormatted}  •  Sensibilidade: ${activeParams.insulinSensitivityFormatted()}',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Card ergonômico para entrada de dados
+  /// Card de entrada de dados (Glicemia & Carboidratos)
   Widget _buildInputCard(BuildContext context) {
     final theme = Theme.of(context);
 
@@ -496,43 +362,273 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
               onChanged: (_) => setState(() {}),
               onFieldSubmitted: (_) => _onCalculate(),
             ),
-            const SizedBox(height: 12),
-
-            // Atalhos rápidos de Carboidratos (+10g, +15g, +30g, +50g)
-            Row(
-              children: [
-                _buildQuickCarbChip('+10g', 10),
-                const SizedBox(width: 6),
-                _buildQuickCarbChip('+15g', 15),
-                const SizedBox(width: 6),
-                _buildQuickCarbChip('+30g', 30),
-                const SizedBox(width: 6),
-                _buildQuickCarbChip('+50g', 50),
-              ],
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildQuickCarbChip(String label, int amount) {
-    return Expanded(
-      child: OutlinedButton(
-        onPressed: () => _addCarbs(amount),
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  /// Apresentação discreta e completa do resultado logo abaixo dos dados da refeição
+  Widget _buildDiscreetResultSection(
+    BuildContext context,
+    BolusCalculationResult result,
+  ) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Alerta de Dose Máxima Ultrapassada (se aplicável)
+        if (result.isMaxBolusExceeded) ...[
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.red.shade300, width: 1.5),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  color: Colors.red.shade700,
+                  size: 24,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'ATENÇÃO: Dose Máxima Ultrapassada!',
+                        style: TextStyle(
+                          color: Colors.red.shade900,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Total calculado (${BolusCalculationResult.formatUnits(result.totalInsulin)} U) ultrapassa o limite (${BolusCalculationResult.formatUnits(result.maxBolus)} U).',
+                        style: TextStyle(
+                          color: Colors.red.shade900,
+                          fontSize: 12.5,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+
+        // Card Discreto e Elegante com a Dose Recomendada
+        Card(
+          elevation: 1.5,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(
+              color: theme.colorScheme.primary.withValues(alpha: 0.25),
+              width: 1.2,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Topo com Dose Recomendada
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'DOSE RECOMENDADA',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          '${BolusCalculationResult.formatUnits(result.totalInsulin)} U',
+                          style: TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.w900,
+                            color: theme.colorScheme.primary,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'insulina rápida',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: theme.colorScheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+
+                // Status da Glicemia se informada
+                if (result.currentGlucose != null) ...[
+                  const SizedBox(height: 12),
+                  GlucoseStatusBadge(
+                    glucose: result.currentGlucose!,
+                    targetMin: result.targetMin,
+                    targetMax: result.targetMax,
+                  ),
+                ],
+
+                const SizedBox(height: 14),
+                const Divider(height: 1),
+                const SizedBox(height: 14),
+
+                // Composição da Dose (Carboidratos vs Correção)
+                Text(
+                  'Composição da Dose',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    // Carboidratos
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF8B5CF6).withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: const Color(0xFF8B5CF6).withValues(alpha: 0.2),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: const [
+                                Icon(
+                                  Icons.bakery_dining_rounded,
+                                  size: 15,
+                                  color: Color(0xFF8B5CF6),
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Carboidratos',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF8B5CF6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${BolusCalculationResult.formatUnits(result.carbohydrateInsulin)} U',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF6D28D9),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              result.carbohydrates != null
+                                  ? '${result.carbohydrates!.toInt()} g (1U/${result.carbohydrateRatio.toInt()}g)'
+                                  : '0 g',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+
+                    // Correção
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0284C7).withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: const Color(0xFF0284C7).withValues(alpha: 0.2),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: const [
+                                Icon(
+                                  Icons.water_drop_rounded,
+                                  size: 15,
+                                  color: Color(0xFF0284C7),
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Correção',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF0284C7),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${BolusCalculationResult.formatUnits(result.correctionInsulin)} U',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF0369A1),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              result.currentGlucose != null
+                                  ? '${result.currentGlucose!.toInt()} mg/dL'
+                                  : 'Não informada',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-        child: Text(
-          label,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-        ),
-      ),
+        const SizedBox(height: 14),
+
+        // Detalhes do Cálculo (Fórmulas Clínicas Retráteis)
+        CalculationBreakdownWidget(result: result),
+      ],
     );
   }
 }

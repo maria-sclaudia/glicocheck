@@ -51,6 +51,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       SettingsScreen(
         settingsService: widget.settingsService,
         isTab: true,
+        onNavigateBackToHome: () => _onTabSelected(0),
       ),
     ];
 

@@ -10,11 +10,17 @@ import '../history/history_screen.dart';
 class ResultScreen extends StatelessWidget {
   final BolusCalculationResult result;
   final SettingsService settingsService;
+  final VoidCallback? onNewCalculation;
+  final VoidCallback? onNavigateToHistory;
+  final bool isTab;
 
   const ResultScreen({
     super.key,
     required this.result,
     required this.settingsService,
+    this.onNewCalculation,
+    this.onNavigateToHistory,
+    this.isTab = false,
   });
 
   @override
@@ -23,24 +29,18 @@ class ResultScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: !isTab,
+        leading: isTab
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back_rounded),
+                tooltip: 'Voltar ao Formulário',
+                onPressed: onNewCalculation,
+              )
+            : null,
         title: const Text(
           'Resultado do Bolus',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.history_rounded),
-            tooltip: 'Ver Histórico',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => HistoryScreen(settingsService: settingsService),
-                ),
-              );
-            },
-          ),
-        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -346,7 +346,11 @@ class ResultScreen extends StatelessWidget {
               ElevatedButton.icon(
                 key: const Key('btn_new_calculation'),
                 onPressed: () {
-                  Navigator.pop(context);
+                  if (onNewCalculation != null) {
+                    onNewCalculation!();
+                  } else {
+                    Navigator.pop(context);
+                  }
                 },
                 icon: const Icon(Icons.arrow_back_rounded, size: 20),
                 label: const Text(
@@ -367,12 +371,16 @@ class ResultScreen extends StatelessWidget {
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed: () {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => HistoryScreen(settingsService: settingsService),
-                    ),
-                  );
+                  if (onNavigateToHistory != null) {
+                    onNavigateToHistory!();
+                  } else {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => HistoryScreen(settingsService: settingsService),
+                      ),
+                    );
+                  }
                 },
                 icon: const Icon(Icons.history_rounded, size: 20),
                 label: const Text(
